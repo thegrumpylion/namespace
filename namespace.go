@@ -85,18 +85,13 @@ func TypeFromString(s string) Type {
 	return INVALID
 }
 
-// ForEach iterates on all namespace types & names lower case
-func ForEach(fn func(t Type, n string)) {
-	for t, n := range typeNameMap {
-		fn(t, n)
+// Types returns a slice with all namespace types
+func Types() []Type {
+	out := []Type{}
+	for t := range typeNameMap {
+		out = append(out, t)
 	}
-}
-
-// ForEachLower iterates on all namespace types & names lower case
-func ForEachLower(fn func(t Type, n string)) {
-	for t, n := range typeNameMap {
-		fn(t, strings.ToLower(n))
-	}
+	return out
 }
 
 // Namespace represents an open file that points to some type of namspace
@@ -138,6 +133,11 @@ func (ns *Namespace) Dev() dev {
 		Major: unix.Major(ns.stat.Dev),
 		Minor: unix.Minor(ns.stat.Dev),
 	}
+}
+
+// FileName returns the name of file
+func (ns *Namespace) FileName() string {
+	return ns.file.Name()
 }
 
 // Set the callers namespace to ns
@@ -229,7 +229,7 @@ func (ns *Namespace) Dup() (*Namespace, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := os.NewFile(uintptr(fd), "")
+	f := os.NewFile(uintptr(fd), ns.file.Name())
 	// xxx: is stating here really necessary?
 	stat, err := stat(f)
 	if err != nil {
