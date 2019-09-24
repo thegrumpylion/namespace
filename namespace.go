@@ -109,11 +109,17 @@ func (ns *Namespace) Type() Type {
 
 // Fd returns the number of the file descriptor
 func (ns *Namespace) Fd() int {
+	if ns.closed {
+		panic("acting on a closed namespace")
+	}
 	return int(ns.file.Fd())
 }
 
 // Ino returns the inode number of namspace
 func (ns *Namespace) Ino() uint64 {
+	if ns.closed {
+		panic("acting on a closed namespace")
+	}
 	return ns.stat.Ino
 }
 
@@ -129,6 +135,9 @@ func (d dev) Dev() uint64 {
 
 // Dev returns the inode number of namspace
 func (ns *Namespace) Dev() dev {
+	if ns.closed {
+		panic("acting on a closed namespace")
+	}
 	return dev{
 		Major: unix.Major(ns.stat.Dev),
 		Minor: unix.Minor(ns.stat.Dev),
@@ -137,12 +146,15 @@ func (ns *Namespace) Dev() dev {
 
 // FileName returns the name of file
 func (ns *Namespace) FileName() string {
+	if ns.closed {
+		panic("acting on a closed namespace")
+	}
 	return ns.file.Name()
 }
 
 // Set the callers namespace to ns
 func (ns *Namespace) Set() error {
-	if ns.closed == true {
+	if ns.closed {
 		panic("acting on a closed namespace")
 	}
 	return unix.Setns(ns.Fd(), int(ns.typ))
@@ -150,7 +162,7 @@ func (ns *Namespace) Set() error {
 
 // Close the file descriptor holding the namespace
 func (ns *Namespace) Close() error {
-	if ns.closed == true {
+	if ns.closed {
 		panic("acting on a closed namespace")
 	}
 	ns.closed = true
@@ -168,7 +180,7 @@ func (ns *Namespace) SetAndClose() error {
 
 // OwningUserNS returns the owning user namespace for a namespace
 func (ns *Namespace) OwningUserNS() (*Namespace, error) {
-	if ns.closed == true {
+	if ns.closed {
 		panic("acting on a closed namespace")
 	}
 	f, err := ioctlGetHierarchichal(ns.file.Fd(), unix.NS_GET_USERNS)
@@ -188,7 +200,7 @@ func (ns *Namespace) OwningUserNS() (*Namespace, error) {
 
 // Parent returns the parent namespace for a user or pid namespace
 func (ns *Namespace) Parent() (*Namespace, error) {
-	if ns.closed == true {
+	if ns.closed {
 		panic("acting on a closed namespace")
 	}
 	if !(ns.typ == PID || ns.typ == USER) {
@@ -211,7 +223,7 @@ func (ns *Namespace) Parent() (*Namespace, error) {
 
 // OwnerUID returns the owner UID for a user namespace
 func (ns *Namespace) OwnerUID() (int, error) {
-	if ns.closed == true {
+	if ns.closed {
 		panic("acting on a closed namespace")
 	}
 	if ns.typ != USER {
@@ -222,7 +234,7 @@ func (ns *Namespace) OwnerUID() (int, error) {
 
 // Dup will return a duplicate of ns
 func (ns *Namespace) Dup() (*Namespace, error) {
-	if ns.closed == true {
+	if ns.closed {
 		panic("acting on a closed namespace")
 	}
 	fd, err := unix.Dup(int(ns.file.Fd()))
