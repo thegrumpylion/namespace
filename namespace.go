@@ -263,7 +263,7 @@ func Open(path string) (*Namespace, error) {
 	}
 	t, err := ioctlGetType(f.Fd())
 	if err != nil {
-		return nil, err
+		return nil, ErrFileNotNamspace
 	}
 	stat, err := stat(f)
 	if err != nil {
