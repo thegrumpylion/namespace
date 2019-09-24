@@ -2,11 +2,11 @@ package namespace
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -48,27 +48,26 @@ const (
 	USER = unix.CLONE_NEWUSER
 	// CGROUP namespace
 	CGROUP = unix.CLONE_NEWCGROUP
+	// INVALID for use in TypeFromString
+	INVALID = 0
 )
 
+var typeNameMap = map[Type]string{
+	MNT:    "MNT",
+	NET:    "NET",
+	PID:    "PID",
+	IPC:    "IPC",
+	UTS:    "UTS",
+	USER:   "USER",
+	CGROUP: "CGROUP",
+}
+
+// String returns the uper case type of namespace
 func (t Type) String() string {
-	switch t {
-	case MNT:
-		return "MNT"
-	case NET:
-		return "NET"
-	case PID:
-		return "PID"
-	case IPC:
-		return "IPC"
-	case UTS:
-		return "UTS"
-	case USER:
-		return "USER"
-	case CGROUP:
-		return "CGROUP"
-	default:
-		return fmt.Sprintf("namespace.Type(%d)", t)
+	if s, ok := typeNameMap[t]; ok {
+		return s
 	}
+	return ""
 }
 
 // StringLower returns lower case namspace type
@@ -76,44 +75,172 @@ func (t Type) StringLower() string {
 	return strings.ToLower(t.String())
 }
 
+// TypeFromString returns a namespace type from a string. case insensitive
+func TypeFromString(s string) Type {
+	for t, n := range typeNameMap {
+		if strings.ToUpper(s) == n {
+			return t
+		}
+	}
+	return INVALID
+}
+
+// ForEach iterates on all namespace types & names lower case
+func ForEach(fn func(t Type, n string)) {
+	for t, n := range typeNameMap {
+		fn(t, n)
+	}
+}
+
+// ForEachLower iterates on all namespace types & names lower case
+func ForEachLower(fn func(t Type, n string)) {
+	for t, n := range typeNameMap {
+		fn(t, strings.ToLower(n))
+	}
+}
+
 // Namespace represents an open file that points to some type of namspace
 type Namespace struct {
-	File *os.File
-	Type Type
+	typ    Type
+	file   *os.File
+	stat   *syscall.Stat_t
+	closed bool
+}
+
+// Type returns the namespace type
+func (ns *Namespace) Type() Type {
+	return ns.typ
+}
+
+// Fd returns the number of the file descriptor
+func (ns *Namespace) Fd() int {
+	return int(ns.file.Fd())
+}
+
+// Ino returns the inode number of namspace
+func (ns *Namespace) Ino() uint64 {
+	return ns.stat.Ino
+}
+
+type dev struct {
+	Major uint32
+	Minor uint32
+}
+
+// Dev returns the uint64 dev representation
+func (d dev) Dev() uint64 {
+	return unix.Mkdev(d.Major, d.Minor)
+}
+
+// Dev returns the inode number of namspace
+func (ns *Namespace) Dev() dev {
+	return dev{
+		Major: unix.Major(ns.stat.Dev),
+		Minor: unix.Minor(ns.stat.Dev),
+	}
 }
 
 // Set the callers namespace to ns
 func (ns *Namespace) Set() error {
-	return unix.Setns(int(ns.File.Fd()), int(ns.Type))
+	if ns.closed == true {
+		panic("acting on a closed namespace")
+	}
+	return unix.Setns(ns.Fd(), int(ns.typ))
+}
+
+// Close the file descriptor holding the namespace
+func (ns *Namespace) Close() error {
+	if ns.closed == true {
+		panic("acting on a closed namespace")
+	}
+	ns.closed = true
+	return ns.file.Close()
+}
+
+// SetAndClose sets the callers namespace to ns then closes the file
+func (ns *Namespace) SetAndClose() error {
+	err := unix.Setns(ns.Fd(), int(ns.typ))
+	if err != nil {
+		return err
+	}
+	return ns.Close()
 }
 
 // OwningUserNS returns the owning user namespace for a namespace
 func (ns *Namespace) OwningUserNS() (*Namespace, error) {
-	f, err := ioctlGetHierarchichal(ns.File.Fd(), unix.NS_GET_USERNS)
+	if ns.closed == true {
+		panic("acting on a closed namespace")
+	}
+	f, err := ioctlGetHierarchichal(ns.file.Fd(), unix.NS_GET_USERNS)
 	if err != nil {
 		return nil, err
 	}
-	return &Namespace{f, USER}, nil
+	stat, err := stat(f)
+	if err != nil {
+		return nil, err
+	}
+	return &Namespace{
+		typ:  USER,
+		file: f,
+		stat: stat,
+	}, nil
 }
 
 // Parent returns the parent namespace for a user or pid namespace
 func (ns *Namespace) Parent() (*Namespace, error) {
-	if !(ns.Type == PID || ns.Type == USER) {
+	if ns.closed == true {
+		panic("acting on a closed namespace")
+	}
+	if !(ns.typ == PID || ns.typ == USER) {
 		return nil, ErrNonHierarchicalNS
 	}
-	f, err := ioctlGetHierarchichal(ns.File.Fd(), unix.NS_GET_PARENT)
+	f, err := ioctlGetHierarchichal(ns.file.Fd(), unix.NS_GET_PARENT)
 	if err != nil {
 		return nil, err
 	}
-	return &Namespace{f, ns.Type}, nil
+	stat, err := stat(f)
+	if err != nil {
+		return nil, err
+	}
+	return &Namespace{
+		typ:  ns.typ,
+		file: f,
+		stat: stat,
+	}, nil
 }
 
 // OwnerUID returns the owner UID for a user namespace
 func (ns *Namespace) OwnerUID() (int, error) {
-	if ns.Type != USER {
+	if ns.closed == true {
+		panic("acting on a closed namespace")
+	}
+	if ns.typ != USER {
 		return 0, ErrNonUserNS
 	}
-	return unix.IoctlGetInt(int(ns.File.Fd()), unix.NS_GET_OWNER_UID)
+	return unix.IoctlGetInt(int(ns.file.Fd()), unix.NS_GET_OWNER_UID)
+}
+
+// Dup will return a duplicate of ns
+func (ns *Namespace) Dup() (*Namespace, error) {
+	if ns.closed == true {
+		panic("acting on a closed namespace")
+	}
+	fd, err := unix.Dup(int(ns.file.Fd()))
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(fd), "")
+	// xxx: is stating here really necessary?
+	stat, err := stat(f)
+	if err != nil {
+		return nil, err
+	}
+	return &Namespace{
+		typ:  ns.typ,
+		file: f,
+		stat: stat,
+	}, nil
+
 }
 
 // Open return a new namspace from the given path. It fails if the file doesn't point to a namespace
@@ -126,7 +253,15 @@ func Open(path string) (*Namespace, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Namespace{f, Type(t)}, nil
+	stat, err := stat(f)
+	if err != nil {
+		return nil, err
+	}
+	return &Namespace{
+		typ:  Type(t),
+		file: f,
+		stat: stat,
+	}, nil
 }
 
 // OpenPID return a new namspace for a PID and Type. Needs procfs.
@@ -137,6 +272,18 @@ func OpenPID(pid int, t Type) (*Namespace, error) {
 // OpenSelf return a new namspace of type t of the caller. Needs procfs.
 func OpenSelf(t Type) (*Namespace, error) {
 	return Open(filepath.Join(PROCFSPath, "self", "ns", t.StringLower()))
+}
+
+func stat(f *os.File) (*syscall.Stat_t, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	stat, ok := st.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, errors.New("stat not Stat_t")
+	}
+	return stat, nil
 }
 
 func ioctlGetType(fd uintptr) (Type, error) {
