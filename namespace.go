@@ -94,6 +94,19 @@ func Types() []Type {
 	return out
 }
 
+// Mask is the value of ORed namespace types
+type Mask int
+
+// Has is true if mask is ORed with provided type
+func (m Mask) Has(t Type) bool {
+	return m&Mask(t) != 0
+}
+
+// Set adds namespace t to the mask and returns it
+func (m Mask) Set(t Type) Mask {
+	return m | Mask(t)
+}
+
 // Namespace represents an open file that points to some type of namspace
 type Namespace struct {
 	typ    Type
