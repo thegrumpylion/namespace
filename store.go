@@ -2,8 +2,6 @@ package namespace
 
 import (
 	"errors"
-	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -26,15 +24,6 @@ type Store interface {
 	Get(typ Type, name string) (*Namespace, error)
 	// List returns the names of saved namespaces for the given type
 	List(typ Type) []string
-
-	// RLock locks store for reading
-	RLock()
-	// RUnlock undoes a single RLock call
-	RUnlock()
-	// Lock locks store for writing
-	Lock()
-	// Unlock unlocks store for writing
-	Unlock()
 }
 
 // ErrExists is returned when trying to add new namespace with existing name
@@ -110,26 +99,6 @@ func (s *memStore) List(typ Type) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// RLock locks store for reading
-func (s *memStore) RLock() {
-	s.RLock()
-}
-
-// RUnlock undoes a single RLock call
-func (s *memStore) RUnlock() {
-	s.RUnlock()
-}
-
-// Lock locks store for writing
-func (s *memStore) Lock() {
-	s.Lock()
-}
-
-// Unlock unlocks store for writing
-func (s *memStore) Unlock() {
-	s.Unlock()
 }
 
 type fsStore struct {
@@ -221,79 +190,4 @@ func (s *fsStore) List(typ Type) []string {
 		out = append(out, inf.Name())
 	}
 	return out
-}
-
-// RLock locks store for reading
-func (s *fsStore) RLock() {
-	err := s.flock(false)
-	if err != nil {
-		panic(fmt.Sprintf("flock r fail: %v", err))
-	}
-	s.RLock()
-}
-
-// RUnlock undoes a single RLock call
-func (s *fsStore) RUnlock() {
-	err := s.funlock()
-	if err != nil {
-		panic(fmt.Sprintf("funlock r fail: %v", err))
-	}
-	s.RUnlock()
-}
-
-// Lock locks store for writing
-func (s *fsStore) Lock() {
-	err := s.flock(true)
-	if err != nil {
-		panic(fmt.Sprintf("flock w fail: %v", err))
-	}
-	s.Lock()
-}
-
-// Unlock unlocks store for writing
-func (s *fsStore) Unlock() {
-	err := s.funlock()
-	if err != nil {
-		panic(fmt.Sprintf("funlock w fail: %v", err))
-	}
-	s.Unlock()
-}
-
-func (s *fsStore) flock(write bool) error {
-	f, err := os.OpenFile(filepath.Join(s.root, "lock"), unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC, 0600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	flock := unix.Flock_t{
-		Whence: io.SeekStart,
-		Start:  0,
-		Len:    0,
-	}
-
-	if write {
-		flock.Type = unix.F_WRLCK
-	} else {
-		flock.Type = unix.F_RDLCK
-	}
-
-	return unix.FcntlFlock(f.Fd(), unix.F_SETLKW, &flock)
-}
-
-func (s *fsStore) funlock() error {
-	f, err := os.OpenFile(filepath.Join(s.root, "lock"), unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC, 0600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	flock := unix.Flock_t{
-		Type:   unix.F_UNLCK,
-		Whence: io.SeekStart,
-		Start:  0,
-		Len:    0,
-	}
-
-	return unix.FcntlFlock(f.Fd(), unix.F_SETLKW, &flock)
 }
