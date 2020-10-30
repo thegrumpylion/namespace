@@ -106,8 +106,29 @@ type fsStore struct {
 	root string
 }
 
+// FsType is the type of FsStore.
+type FsType uint8
+
+const (
+	// FsTempfs use tempfs on store dir for FsStore
+	FsTempfs FsType = iota
+	// FsBind bind mount the store dir for FsStore
+	FsBind
+)
+
 // NewFsStore returns a new namespace fs store
-func NewFsStore(root string) (Store, error) {
+func NewFsStore(root string, ft FsType) (Store, error) {
+	root = filepath.Clean(root)
+	switch ft {
+	case FsTempfs:
+		if err := unix.Mount("tmpfs", root, "tmpfs", unix.MS_PRIVATE, ""); err != nil {
+			return nil, err
+		}
+	case FsBind:
+		if err := unix.Mount(root, root, "", unix.MS_PRIVATE|unix.MS_BIND, ""); err != nil {
+			return nil, err
+		}
+	}
 	for _, t := range Types() {
 		err := os.Mkdir(filepath.Join(root, t.StringLower()), 0666)
 		if err != nil {
@@ -128,17 +149,8 @@ func (s *fsStore) Add(ns *Namespace, name string) error {
 	src := ns.FileName()
 	trgt := filepath.Join(s.root, ns.Type().StringLower(), name)
 
-	// xxx: maybe is better to Lstat and validate link manually
 	if _, err := os.Stat(trgt); err == nil {
 		return ErrExists
-	}
-
-	// best effort for MNT ns. just symlink because we cannot bind mount it.
-	// we also symlink PID ns because we don't want it to persist if the process
-	// that created it died
-	// TODO: also save the ino for extra safty on the links
-	if ns.Type() == MNT || ns.Type() == PID {
-		return os.Symlink(src, trgt)
 	}
 
 	f, err := os.Create(trgt)
