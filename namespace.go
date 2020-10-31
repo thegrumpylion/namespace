@@ -184,6 +184,9 @@ func (ns *Namespace) OwningUserNS() (*Namespace, error) {
 	if ns.closed {
 		panic("acting on a closed namespace")
 	}
+	if ns.typ != USER {
+		return nil, ErrNonUserNS
+	}
 	f, err := ioctlGetHierarchichal(ns.file.Fd(), unix.NS_GET_USERNS)
 	if err != nil {
 		return nil, err

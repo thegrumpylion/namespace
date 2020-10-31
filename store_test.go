@@ -41,6 +41,16 @@ func testStore(t *testing.T, s Store, pfx string) {
 	}
 
 	for _, nsType := range Types() {
+		lst := s.List(nsType)
+		if len(lst) != 1 {
+			t.Fatal("list should only have one entry for namespace", nsType.String())
+		}
+		if lst[0] != nsname(nsType) {
+			t.Fatalf("expecting %s but got %s for namespace %s", nsname(nsType), lst[0], nsType)
+		}
+	}
+
+	for _, nsType := range Types() {
 		if err := s.Delete(nsType, nsname(nsType)); err != nil {
 			t.Fatal("fail to delete", nsname(nsType))
 		}
