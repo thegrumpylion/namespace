@@ -94,19 +94,6 @@ func Types() []Type {
 	return out
 }
 
-// Mask is the value of ORed namespace types
-type Mask int
-
-// Has is true if mask is ORed with provided type
-func (m Mask) Has(t Type) bool {
-	return m&Mask(t) != 0
-}
-
-// Set adds namespace t to the mask and returns it
-func (m Mask) Set(t Type) Mask {
-	return m | Mask(t)
-}
-
 // Namespace represents an open file that points to some type of namspace
 type Namespace struct {
 	typ    Type
@@ -120,7 +107,7 @@ func (ns *Namespace) Type() Type {
 	return ns.typ
 }
 
-// Fd returns the number of the file descriptor
+// Fd returns the number of the file descriptor. Panics if namespace has been closed.
 func (ns *Namespace) Fd() int {
 	if ns.closed {
 		panic("acting on a closed namespace")
@@ -128,7 +115,7 @@ func (ns *Namespace) Fd() int {
 	return int(ns.file.Fd())
 }
 
-// Ino returns the inode number of namspace
+// Ino returns the inode number of namspace. Panics if namespace has been closed.
 func (ns *Namespace) Ino() uint64 {
 	if ns.closed {
 		panic("acting on a closed namespace")
@@ -136,28 +123,29 @@ func (ns *Namespace) Ino() uint64 {
 	return ns.stat.Ino
 }
 
-type dev struct {
+// Dev linux device
+type Dev struct {
 	Major uint32
 	Minor uint32
 }
 
 // Dev returns the uint64 dev representation
-func (d dev) Dev() uint64 {
+func (d Dev) Dev() uint64 {
 	return unix.Mkdev(d.Major, d.Minor)
 }
 
-// Dev returns the inode number of namspace
-func (ns *Namespace) Dev() dev {
+// Dev returns the inode number of namspace. Panics if namespace has been closed.
+func (ns *Namespace) Dev() Dev {
 	if ns.closed {
 		panic("acting on a closed namespace")
 	}
-	return dev{
+	return Dev{
 		Major: unix.Major(ns.stat.Dev),
 		Minor: unix.Minor(ns.stat.Dev),
 	}
 }
 
-// FileName returns the name of file
+// FileName returns the name of file. Panics if namespace has been closed.
 func (ns *Namespace) FileName() string {
 	if ns.closed {
 		panic("acting on a closed namespace")
@@ -165,7 +153,7 @@ func (ns *Namespace) FileName() string {
 	return ns.file.Name()
 }
 
-// Set the callers namespace to ns
+// Set the callers namespace to ns. Panics if namespace has been closed.
 func (ns *Namespace) Set() error {
 	if ns.closed {
 		panic("acting on a closed namespace")
@@ -173,7 +161,7 @@ func (ns *Namespace) Set() error {
 	return unix.Setns(ns.Fd(), int(ns.typ))
 }
 
-// Close the file descriptor holding the namespace
+// Close the file descriptor holding the namespace. Panics if namespace has been closed.
 func (ns *Namespace) Close() error {
 	if ns.closed {
 		panic("acting on a closed namespace")
@@ -182,7 +170,7 @@ func (ns *Namespace) Close() error {
 	return ns.file.Close()
 }
 
-// SetAndClose sets the callers namespace to ns then closes the file
+// SetAndClose sets the callers namespace to ns then closes the file. Panics if namespace has been closed.
 func (ns *Namespace) SetAndClose() error {
 	err := unix.Setns(ns.Fd(), int(ns.typ))
 	if err != nil {
@@ -191,7 +179,7 @@ func (ns *Namespace) SetAndClose() error {
 	return ns.Close()
 }
 
-// OwningUserNS returns the owning user namespace for a namespace
+// OwningUserNS returns the owning user namespace for a namespace. Panics if namespace has been closed.
 func (ns *Namespace) OwningUserNS() (*Namespace, error) {
 	if ns.closed {
 		panic("acting on a closed namespace")
@@ -211,7 +199,7 @@ func (ns *Namespace) OwningUserNS() (*Namespace, error) {
 	}, nil
 }
 
-// Parent returns the parent namespace for a user or pid namespace
+// Parent returns the parent namespace for a user or pid namespace. Panics if namespace has been closed.
 func (ns *Namespace) Parent() (*Namespace, error) {
 	if ns.closed {
 		panic("acting on a closed namespace")
@@ -234,7 +222,7 @@ func (ns *Namespace) Parent() (*Namespace, error) {
 	}, nil
 }
 
-// OwnerUID returns the owner UID for a user namespace
+// OwnerUID returns the owner UID for a user namespace. Panics if namespace has been closed.
 func (ns *Namespace) OwnerUID() (int, error) {
 	if ns.closed {
 		panic("acting on a closed namespace")
@@ -245,7 +233,7 @@ func (ns *Namespace) OwnerUID() (int, error) {
 	return unix.IoctlGetInt(int(ns.file.Fd()), unix.NS_GET_OWNER_UID)
 }
 
-// Dup will return a duplicate of ns
+// Dup will return a duplicate of ns. Panics if namespace has been closed.
 func (ns *Namespace) Dup() (*Namespace, error) {
 	if ns.closed {
 		panic("acting on a closed namespace")
@@ -254,26 +242,11 @@ func (ns *Namespace) Dup() (*Namespace, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := os.NewFile(uintptr(fd), ns.file.Name())
-	// xxx: is stating here really necessary?
-	stat, err := stat(f)
-	if err != nil {
-		return nil, err
-	}
-	return &Namespace{
-		typ:  ns.typ,
-		file: f,
-		stat: stat,
-	}, nil
-
+	return FromFD(fd, ns.file.Name())
 }
 
-// Open return a new namspace from the given path. It fails if the file doesn't point to a namespace
-func Open(path string) (*Namespace, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
+// FromFile return a new namspace from open file. It fails if the file doesn't point to a namespace
+func FromFile(f *os.File) (*Namespace, error) {
 	t, err := ioctlGetType(f.Fd())
 	if err != nil {
 		return nil, ErrFileNotNamspace
@@ -289,14 +262,29 @@ func Open(path string) (*Namespace, error) {
 	}, nil
 }
 
-// OpenPID return a new namspace for a PID and Type. Needs procfs.
-func OpenPID(pid int, t Type) (*Namespace, error) {
-	return Open(filepath.Join(PROCFSPath, strconv.Itoa(pid), "ns", t.StringLower()))
+// FromFD return a new namspace from a file desriptor number. It fails if the file doesn't point to a namespace
+func FromFD(fd int, name string) (*Namespace, error) {
+	f := os.NewFile(uintptr(fd), name)
+	return FromFile(f)
 }
 
-// OpenSelf return a new namspace of type t of the caller. Needs procfs.
-func OpenSelf(t Type) (*Namespace, error) {
-	return Open(filepath.Join(PROCFSPath, "self", "ns", t.StringLower()))
+// FromPath return a new namspace from the given path. It fails if the file doesn't point to a namespace
+func FromPath(path string) (*Namespace, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return FromFile(f)
+}
+
+// FromPID return a new namspace for a PID and Type. Needs procfs.
+func FromPID(pid int, t Type) (*Namespace, error) {
+	return FromPath(filepath.Join(PROCFSPath, strconv.Itoa(pid), "ns", t.StringLower()))
+}
+
+// Self return a new namspace of type t of the caller. Needs procfs.
+func Self(t Type) (*Namespace, error) {
+	return FromPath(filepath.Join(PROCFSPath, "self", "ns", t.StringLower()))
 }
 
 func stat(f *os.File) (*syscall.Stat_t, error) {

@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -110,8 +111,8 @@ type fsStore struct {
 type FsType uint8
 
 const (
-	// FsTempfs use tempfs on store dir for FsStore
-	FsTempfs FsType = iota
+	// FsTmpfs use tempfs on store dir for FsStore
+	FsTmpfs FsType = iota
 	// FsBind bind mount the store dir for FsStore
 	FsBind
 )
@@ -120,13 +121,19 @@ const (
 func NewFsStore(root string, ft FsType) (Store, error) {
 	root = filepath.Clean(root)
 	switch ft {
-	case FsTempfs:
+	case FsTmpfs:
+		if err := unix.Mount("tmpfs", root, "tmpfs", 0, ""); err != nil {
+			return nil, fmt.Errorf("tmpfs mount %s fail: %v", root, err)
+		}
 		if err := unix.Mount("tmpfs", root, "tmpfs", unix.MS_PRIVATE, ""); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("tmpfs make private %s fail: %v", root, err)
 		}
 	case FsBind:
-		if err := unix.Mount(root, root, "", unix.MS_PRIVATE|unix.MS_BIND, ""); err != nil {
-			return nil, err
+		if err := unix.Mount(root, root, "", unix.MS_BIND, ""); err != nil {
+			return nil, fmt.Errorf("bind mount %s fail: %v", root, err)
+		}
+		if err := unix.Mount("", root, "", unix.MS_PRIVATE, ""); err != nil {
+			return nil, fmt.Errorf("bind mount make private %s fail: %v", root, err)
 		}
 	}
 	for _, t := range Types() {
@@ -140,7 +147,7 @@ func NewFsStore(root string, ft FsType) (Store, error) {
 	}, nil
 }
 
-// Add dups and saves the namespace in the store
+// Add bind mounts the namespace in the fs store
 func (s *fsStore) Add(ns *Namespace, name string) error {
 	if _, err := os.Stat(ns.FileName()); err != nil {
 		return err
@@ -164,10 +171,10 @@ func (s *fsStore) Add(ns *Namespace, name string) error {
 
 // Delete closse the namespace file and removes it from store
 func (s *fsStore) Delete(typ Type, name string) error {
-	trgt := filepath.Join(s.root, typ.StringLower(), name)
-	if _, err := os.Stat(trgt); err != nil {
+	if !s.Exists(typ, name) {
 		return ErrNotExists
 	}
+	trgt := filepath.Join(s.root, typ.StringLower(), name)
 	err := unix.Unmount(trgt, 0)
 	if err != nil {
 		return err
@@ -186,8 +193,11 @@ func (s *fsStore) Exists(typ Type, name string) bool {
 
 // Get dups and returns the namespace with given type and name from store
 func (s *fsStore) Get(typ Type, name string) (*Namespace, error) {
+	if !s.Exists(typ, name) {
+		return nil, ErrNotExists
+	}
 	trgt := filepath.Join(s.root, typ.StringLower(), name)
-	return Open(trgt)
+	return FromPath(trgt)
 }
 
 // List returns the names of saved namespaces for the given type
