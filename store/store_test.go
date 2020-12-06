@@ -1,14 +1,31 @@
-package namespace
+package store_test
 
 import (
+	"os/exec"
+	"syscall"
 	"testing"
 
+	"github.com/thegrumpylion/namespace"
+	"github.com/thegrumpylion/namespace/store"
+	"github.com/thegrumpylion/namespace/store/fs"
+	"github.com/thegrumpylion/namespace/store/mem"
 	"golang.org/x/sys/unix"
 )
 
-func testStore(t *testing.T, s Store, pfx string) {
+func newProcess(m namespace.Mask) (*exec.Cmd, error) {
+	c := exec.Command("sleep", "7200")
+	c.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: m.Uintptr(),
+	}
+	if err := c.Start(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
 
-	m := NewMask().SetAll()
+func testStore(t *testing.T, s store.Store, pfx string) {
+
+	m := namespace.NewMask().SetAll()
 
 	c, err := newProcess(m)
 	if err != nil {
@@ -18,19 +35,19 @@ func testStore(t *testing.T, s Store, pfx string) {
 
 	ppid := c.Process.Pid
 
-	nsname := func(nst Type) string {
+	nsname := func(nst namespace.Type) string {
 		return pfx + nst.StringLower()
 	}
 
-	for _, nsType := range Types() {
-		ns, err := FromPID(ppid, nsType)
+	for _, nsType := range namespace.Types() {
+		ns, err := namespace.FromPID(ppid, nsType)
 		if err != nil {
 			t.Fatalf("fail to get %s ns for pid %d", nsType, ppid)
 		}
 		s.Add(ns, nsname(nsType))
 	}
 
-	for _, nsType := range Types() {
+	for _, nsType := range namespace.Types() {
 		ns, err := s.Get(nsType, nsname(nsType))
 		if err != nil {
 			t.Fatal("could not get", nsname(nsType))
@@ -40,7 +57,7 @@ func testStore(t *testing.T, s Store, pfx string) {
 		}
 	}
 
-	for _, nsType := range Types() {
+	for _, nsType := range namespace.Types() {
 		lst := s.List(nsType)
 		if len(lst) != 1 {
 			t.Fatal("list should only have one entry for namespace", nsType.String())
@@ -50,7 +67,7 @@ func testStore(t *testing.T, s Store, pfx string) {
 		}
 	}
 
-	for _, nsType := range Types() {
+	for _, nsType := range namespace.Types() {
 		if err := s.Delete(nsType, nsname(nsType)); err != nil {
 			t.Fatal("fail to delete", nsname(nsType))
 		}
@@ -65,7 +82,7 @@ func testStore(t *testing.T, s Store, pfx string) {
 func TestFsStoreTmpfs(t *testing.T) {
 	tmp := t.TempDir()
 
-	s, err := NewFsStore(tmp, FsTmpfs)
+	s, err := fs.NewFsStore(tmp, fs.FsTmpfs, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +94,7 @@ func TestFsStoreTmpfs(t *testing.T) {
 func TestFsStoreBind(t *testing.T) {
 	tmp := t.TempDir()
 
-	s, err := NewFsStore(tmp, FsBind)
+	s, err := fs.NewFsStore(tmp, fs.FsBind, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +105,7 @@ func TestFsStoreBind(t *testing.T) {
 
 func TestMemStore(t *testing.T) {
 
-	s := NewMemStore()
+	s := mem.NewMemStore()
 
 	testStore(t, s, "mem_")
 }
